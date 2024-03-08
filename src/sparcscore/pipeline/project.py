@@ -575,9 +575,9 @@ class TimecourseProject(Project):
 
                 # get information on directory
                 well = re.search(
-                    "Row.._Well[0-9][0-9]", dir
+                    "Row\d+?_Well\d+?", dir
                 ).group()  # need to use re.search and not match sinde the identifier is not always at the beginning of the name
-                region = re.search("r..._c...$", dir).group()
+                region = re.search("r.+?_c.+?$", dir).group()
 
                 # list all images within directory
                 path = os.path.join(input_dir, dir)
@@ -588,7 +588,7 @@ class TimecourseProject(Project):
 
                 # checkt to make sure all timepoints are actually there
                 _timepoints = np.unique(
-                    [re.search("Timepoint[0-9][0-9][0-9]", x).group() for x in files]
+                    [re.search("Timepoint\d+?", x).group() for x in files]
                 )
 
                 sum = 0
@@ -612,6 +612,9 @@ class TimecourseProject(Project):
 
                     for i, im in enumerate(images):
                         image = imread(os.path.join(path, im), 0)
+                        if image.shape != (img_size, img_size):
+                            print(f"Image shape is {image.shape} instead of ({img_size}, {img_size}). Cropping to the rquired shape.")
+                            image = image[0:img_size, 0:img_size]
                         imgs[i, ix, :, :] = image
 
                 # create labelling
@@ -668,12 +671,12 @@ class TimecourseProject(Project):
             directories = [
                 _dir
                 for _dir in directories
-                if re.search("Row.._Well[0-9][0-9]", _dir).group() in wells
+                if re.search("Row\d+?_Well\d+?", _dir).group() in wells
             ]
 
             # check to ensure that imaging data is found for all wells listed in plate_layout
             _wells = [
-                re.match("^Row.._Well[0-9][0-9]", _dir).group() for _dir in directories
+                re.match("^Row\d+?_Well\d+?", _dir).group() for _dir in directories
             ]
             not_found = [well for well in _wells if well not in wells]
             if len(not_found) > 0:
@@ -830,7 +833,7 @@ class TimecourseProject(Project):
                 list(
                     set(
                         [
-                            re.match(".*_Row[0-9][0-9]_Well[0-9][0-9]", x).group()[13:]
+                            re.match(".*_Row\d+?_Well\d+?", x).group()[13:]
                             for x in images
                         ]
                     )

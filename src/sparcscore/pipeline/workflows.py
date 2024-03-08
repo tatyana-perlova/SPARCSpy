@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import skfmm
+from scipy.sparse import csr_matrix
 
 from functools import partial
 from multiprocessing import Pool
@@ -718,11 +719,12 @@ class CytosolSegmentationCellpose(BaseSegmentation):
 
         self.log(f"Number of nuclei to filter: {len(all_nucleus_ids)}")
 
+        masks_nucleus_sparse = csr_matrix(masks_nucleus)
         ### STEP 1: filter cells based on having a matching cytosol mask
         for nucleus_id in all_nucleus_ids:
             
             # get the nucleus and set the background to 0 and the nucleus to 1
-            nucleus = (masks_nucleus == nucleus_id)
+            nucleus = (masks_nucleus_sparse == nucleus_id)
             
             # now get the coordinates of the nucleus
             nucleus_pixels = np.nonzero(nucleus)
@@ -771,9 +773,10 @@ class CytosolSegmentationCellpose(BaseSegmentation):
         used_cytosol_ids = set(nucleus_cytosol_pairs.values())
         not_used_cytosol_ids = all_cytosol_ids - used_cytosol_ids
 
+        masks_cytosol_sparse = csr_matrix(masks_cytosol)
         # set all cytosol ids that are not present in lookup table to 0 in the cytosol mask
         for cytosol_id in not_used_cytosol_ids:
-            masks_cytosol[masks_cytosol == cytosol_id] = 0
+            masks_cytosol[masks_cytosol_sparse == cytosol_id] = 0
 
         ### STEP 5: filter nucleus masks that are not in the lookup table
             
@@ -785,7 +788,7 @@ class CytosolSegmentationCellpose(BaseSegmentation):
 
         # set all nucleus ids that are not present in lookup table to 0 in the nucleus mask
         for nucleus_id in not_used_nucleus_ids:
-            masks_nucleus[masks_nucleus == nucleus_id] = 0
+            masks_nucleus[masks_nucleus_sparse == nucleus_id] = 0
         
         ### STEP 6: filter cytosol masks that are not in the lookup table
 
@@ -793,11 +796,11 @@ class CytosolSegmentationCellpose(BaseSegmentation):
         updated_cytosol_mask = np.zeros_like(masks_cytosol, dtype=bool)
         for nucleus_id, cytosol_id in nucleus_cytosol_pairs.items():
             if cytosol_id == 0:
-                masks_nucleus[masks_nucleus == nucleus_id] = 0  # set the nucleus to 0
+                masks_nucleus[masks_nucleus_sparse == nucleus_id] = 0  # set the nucleus to 0
             else:
                 # set the cytosol pixels to the nucleus_id if not previously updated
                 condition = np.logical_and(
-                    masks_cytosol == cytosol_id, ~updated_cytosol_mask
+                    masks_cytosol_sparse == cytosol_id, ~updated_cytosol_mask
                 )
                 masks_cytosol[condition] = nucleus_id
                 updated_cytosol_mask = np.logical_or(updated_cytosol_mask, condition)
