@@ -693,7 +693,7 @@ class TimecourseSegmentation(Segmentation):
             
             hf.create_dataset("classes", shape = self.shape_classes, maxshape=(None), chunks= None, dtype = dt)
 
-            results = flatten(results)
+            # results = flatten(results)
         
             for x in results:
                 i, arr = x
@@ -938,7 +938,7 @@ class MultithreadedSegmentation(TimecourseSegmentation):
     def initialize_shard_list(self, segmentation_list, input_path):
         _shard_list = []
 
-        for i  in tqdm(segmentation_list, total = len(segmentation_list), desc="Generating Shards"):
+        for i in tqdm(segmentation_list, total = len(segmentation_list), desc="Generating Shards"):
 
             current_shard = self.method(
                  self.config,

@@ -8,6 +8,11 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import skfmm
+from sparse import COO
+import pandas as pd
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
+import concurrent
 
 from functools import partial
 from multiprocessing import Pool
@@ -693,9 +698,12 @@ class CytosolSegmentationCellpose(BaseSegmentation):
         #################################
         #### Perform Cytosol Segmentation
         #################################
-
+        if self.config["cytosol_segmentation"]["use_nucleus_channel"]:
+            channels = [2, 1]
+        else:
+            channels = [2, 0]
         masks_cytosol = model.eval(
-            [input_image], diameter=diameter, channels=[2, 1]
+            [input_image], diameter=diameter, channels=channels
         )[0]
         masks_cytosol = np.array(masks_cytosol)  # convert to array
 
@@ -714,93 +722,104 @@ class CytosolSegmentationCellpose(BaseSegmentation):
         ### Perform Cell Filtering
         ##########################    
         all_nucleus_ids = np.unique(masks_nucleus)[1:]
-        nucleus_cytosol_pairs = {}
 
         self.log(f"Number of nuclei to filter: {len(all_nucleus_ids)}")
-
-        ### STEP 1: filter cells based on having a matching cytosol mask
-        for nucleus_id in all_nucleus_ids:
-            
-            # get the nucleus and set the background to 0 and the nucleus to 1
-            nucleus = (masks_nucleus == nucleus_id)
-            
-            # now get the coordinates of the nucleus
-            nucleus_pixels = np.nonzero(nucleus)
-
-            # check if those indices are not background in the cytosol mask
-            potential_cytosol = masks_cytosol[nucleus_pixels]
-
-            if np.all(potential_cytosol != 0):
-
-                unique_cytosol, counts = np.unique(
-                    potential_cytosol, return_counts=True
-                )
-                all_counts = np.sum(counts)
-                cytosol_proportions = counts / all_counts
-
-                if np.any(cytosol_proportions >= self.config["filtering_threshold"]):
-
-                    # get the cytosol_id with max proportion
-                    cytosol_id = unique_cytosol[
-                        np.argmax(cytosol_proportions >= self.config["filtering_threshold"])
-                    ]
-                    nucleus_cytosol_pairs[nucleus_id] = cytosol_id
-                else:
-                    nucleus_cytosol_pairs[nucleus_id] = 0
-
-        ### STEP 2: count the occurrences of each cytosol value
-                    
-        # check if there are any cytosol masks that are assigned to multiple nuclei
-        cytosol_count = defaultdict(int)
-
-        # Count the occurrences of each cytosol value
-        for cytosol in nucleus_cytosol_pairs.values():
-            cytosol_count[cytosol] += 1
         
-        ### STEP 3: remove cytosol ids that are assigned to more than one nucleus
-
-        # Find cytosol values assigned to more than one nucleus
-        for nucleus, cytosol in nucleus_cytosol_pairs.items():
-            if cytosol_count[cytosol] > 1:
-                nucleus_cytosol_pairs[nucleus] = 0
+        ### STEP 1: Find matching nucleus-cytosol pairs
         
+        def get_cell_indices(labels,
+                            cell_i):
+            indices = (labels == cell_i).nonzero()
+            return(indices)
+        
+        #Get indices of the nuclei
+        masks_nucleus_sparse = COO(masks_nucleus)
+        nuclei_indices = {}
+        with ThreadPoolExecutor(max_workers=self.config['threads']) as executor:
+            future_to_cell = {executor.submit(
+                            get_cell_indices,
+                            masks_nucleus_sparse,
+                            cell_i,
+                            ):
+                            cell_i for cell_i in np.unique(masks_nucleus)[1:]}
+
+            for future in tqdm(concurrent.futures.as_completed(future_to_cell)):
+                cell_i = future_to_cell[future]
+                nuclei_indices[cell_i] = future.result()
+
+        #Get indices of the corresponding cytosols
+        cytosol_indices = {i: np.unique(
+                            masks_cytosol[nuclei_indices[i]], 
+                            return_counts=True
+                            ) for i in np.unique(masks_nucleus)[1:]}
+
+        #Combine in the dataframe
+        nucleus_cytosol_pairs = pd.DataFrame(
+                                cytosol_indices
+                            ).transpose().reset_index().explode([0,1])
+
+        nucleus_cytosol_pairs.rename(columns={'index': 'nucleus_id', 
+                                            0: 'cytosol_id', 
+                                            1: 'n_pixels'},
+                                    inplace = True)
+        
+        ### STEP 2: Find overlap proportions between nuclei and cytosol and filter
+        
+        nucleus_cytosol_pairs['total'] = nucleus_cytosol_pairs.groupby(
+                                    'nucleus_id'
+                                 )['n_pixels'].transform('sum')
+
+        nucleus_cytosol_pairs['fraction'] = nucleus_cytosol_pairs[
+                                        'n_pixels'
+                                    ]/nucleus_cytosol_pairs['total']
+        
+        #We can now drop the pairs with cytosol index of 0
+        nucleus_cytosol_pairs = nucleus_cytosol_pairs[
+                        nucleus_cytosol_pairs.cytosol_id != 0
+                        ].copy()
+        # Only keep those with overlap above the threshold
+        # Theoretically at this point we might lose some nuclei
+        nucleus_cytosol_pairs = nucleus_cytosol_pairs[(
+                            nucleus_cytosol_pairs['fraction'] >= self.config["filtering_threshold"]
+                        )].copy()
+        
+        ### STEP 3: Check if there are any cytosol masks that are assigned to multiple nuclei
+        # nucleus_cytosol_pairs['n_nuclei'] = nucleus_cytosol_pairs.groupby(
+        #                                 'cytosol_id'
+        #                             )['nucleus_id'].transform('nunique')
+        
+        #remove cytosol ids that are assigned to more than one nucleus
+        #nucleus_cytosol_pairs.loc[nucleus_cytosol_pairs.n_nuclei > 1, 'cytosol_id'] = 0
+        
+        #Instead of doing that select nuclei with the lagest overlap with the cytosol
+        nucleus_cytosol_pairs = nucleus_cytosol_pairs.loc[
+                            nucleus_cytosol_pairs.groupby(
+                                'cytosol_id'
+                            )['total'].idxmax()
+                        ].copy()
         ### STEP 4: filter to remove cytosol masks that are not in the lookup table
         # get unique cytosol ids that are not in the lookup table
         all_cytosol_ids = set(np.unique(masks_cytosol))
-        all_cytosol_ids.discard(0)
-        used_cytosol_ids = set(nucleus_cytosol_pairs.values())
+        used_cytosol_ids = set(nucleus_cytosol_pairs['cytosol_id'].unique())
         not_used_cytosol_ids = all_cytosol_ids - used_cytosol_ids
 
         # set all cytosol ids that are not present in lookup table to 0 in the cytosol mask
-        for cytosol_id in not_used_cytosol_ids:
-            masks_cytosol[masks_cytosol == cytosol_id] = 0
+        masks_cytosol_sparse = COO(masks_cytosol)
+        not_used_mask = np.isin(masks_cytosol_sparse.data, list(not_used_cytosol_ids))
+        indices_to_zero = masks_cytosol_sparse.coords[:, not_used_mask]
+        masks_cytosol[indices_to_zero[0], indices_to_zero[1], indices_to_zero[2]] = 0
 
         ### STEP 5: filter nucleus masks that are not in the lookup table
-            
-        # get unique nucleus ids that are not in the lookup table
-        all_nucleus_ids = set(np.unique(masks_nucleus))
-        all_nucleus_ids.discard(0)
-        used_nucleus_ids = set(nucleus_cytosol_pairs.keys())
-        not_used_nucleus_ids = all_nucleus_ids - used_nucleus_ids
-
-        # set all nucleus ids that are not present in lookup table to 0 in the nucleus mask
-        for nucleus_id in not_used_nucleus_ids:
-            masks_nucleus[masks_nucleus == nucleus_id] = 0
+        # We skip this part as we want to keep all nuclei
+        
         
         ### STEP 6: filter cytosol masks that are not in the lookup table
 
         # now we have all the nucleus cytosol pairs we can filter the masks
-        updated_cytosol_mask = np.zeros_like(masks_cytosol, dtype=bool)
-        for nucleus_id, cytosol_id in nucleus_cytosol_pairs.items():
-            if cytosol_id == 0:
-                masks_nucleus[masks_nucleus == nucleus_id] = 0  # set the nucleus to 0
-            else:
-                # set the cytosol pixels to the nucleus_id if not previously updated
-                condition = np.logical_and(
-                    masks_cytosol == cytosol_id, ~updated_cytosol_mask
-                )
-                masks_cytosol[condition] = nucleus_id
-                updated_cytosol_mask = np.logical_or(updated_cytosol_mask, condition)
+        index_pairs = nucleus_cytosol_pairs.loc[nucleus_cytosol_pairs.cytosol_id != 0,
+                      ['nucleus_id', 'cytosol_id']].values
+        for nucleus_id, cytosol_id in index_pairs:
+            masks_cytosol[(masks_cytosol_sparse == cytosol_id).nonzero()] = nucleus_id
         
         if self.debug:
             # plot nucleus and cytosol masks before and after filtering
@@ -821,7 +840,7 @@ class CytosolSegmentationCellpose(BaseSegmentation):
             del fig  # delete figure after showing to free up memory again
 
         #cleanup memory by deleting no longer required variables
-        del updated_cytosol_mask, all_nucleus_ids, used_nucleus_ids
+        del all_nucleus_ids
         
         # first when the masks are finalized save them to the maps
         self.maps["nucleus_segmentation"] = masks_nucleus.reshape(
