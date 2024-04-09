@@ -620,7 +620,28 @@ class CellFeaturizer():
         self.inference(dataloader)
 
     def calculate_statistics(self, img, channel = -1):   
-        #get batch size
+        
+        def masked_quantile(x, mask, quantile=0.5, dim=1, keepdim=True):
+            """Compute the quantile of tensor x along dim, ignoring values where mask is False.
+            x and mask need to be broadcastable.
+
+            Args:
+                x (Tensor): Tensor to compute the quantile of.
+                mask (BoolTensor): Same shape as x with True where x is valid and False
+                    where x should be masked. Mask should not be all False in any column of
+                    dimension dim to avoid NaNs.
+                dim (int, optional): Dimension to take the quantile of. Defaults to 0.
+                quantile (float, optional): Quantile to compute, where 0.5 represents the median. Defaults to 0.5.
+                keepdim (bool, optional): Whether the output tensor has dim retained or not. Defaults to False.
+
+            Returns:
+                Tensor: The computed quantile along the specified dimension.
+            """
+            x_nan = x.float().masked_fill(~mask, float('nan'))
+            quantile_value = x_nan.view(N, -1).nanquantile(q=quantile, dim=dim, keepdim=keepdim)
+            return quantile_value
+
+        # Assuming img is a 4D tensor with dimensions (N, H, W, C) and 'channel' specifies the channel index to be used
         N, _, _, _ = img.shape
         
         #calculate area statistics
@@ -636,11 +657,16 @@ class CellFeaturizer():
         quant75 = img_selected.view(N, -1).quantile(q = 0.75, dim = 1, keepdim = True)
         quant25 = img_selected.view(N, -1).quantile(q = 0.25, dim = 1, keepdim = True)
         
-        #calculate more complex statistics
+        # calculate more complex statistics
+        # Calculate median/mean intensity in the nucleus area
         summed_intensity_nucleus_area = masked_tensor(img_selected, nucleus_mask).view(N, -1).sum(1).reshape((N, 1)).to_tensor(0)
         summed_intensity_nucleus_area_normalized = summed_intensity_nucleus_area/nucleus_area
-        summed_intensity_cytosol_area = img_selected.view(N, -1 ).sum(1, keepdims = True)
+        median_intensity_nucleus_area = masked_quantile(img_selected, nucleus_mask, quantile = 0.5, dim = 1, keepdim = True)
+        
+        # Calculate median/mean intensity in the cytosol area
+        summed_intensity_cytosol_area = masked_tensor(img_selected, cytosol_mask).view(N, -1).sum(1).reshape((N, 1)).to_tensor(0)
         summed_intensity_cytosol_area_normalized = summed_intensity_cytosol_area/cytosol_area
+        median_intensity_cytosol_area = masked_quantile(img_selected, cytosol_mask, quantile = 0.5, dim = 1, keepdim = True)
         
         #generate results tensor with all values and return
         results = torch.concat([nucleus_area, 
@@ -652,7 +678,9 @@ class CellFeaturizer():
                                 summed_intensity_nucleus_area, 
                                 summed_intensity_cytosol_area, 
                                 summed_intensity_nucleus_area_normalized, 
-                                summed_intensity_cytosol_area_normalized ], 1)
+                                summed_intensity_cytosol_area_normalized,
+                                median_intensity_nucleus_area, 
+                                median_intensity_cytosol_area], 1)
         return(results)
 
     def inference(self, 
@@ -692,7 +720,9 @@ class CellFeaturizer():
                          "summed_intensity_nucleus_area", 
                          "summed_intensity_cytosol_area", 
                          "summed_intensity_nucleus_area_normalized", 
-                         "summed_intensity_cytosol_area_normalized"]
+                         "summed_intensity_cytosol_area_normalized",
+                         "median_intensity_nucleus_area", 
+                         "median_intensity_cytosol_area"]
         
         dataframe = pd.DataFrame(data=result, columns=result_labels)
         dataframe["label"] = label
