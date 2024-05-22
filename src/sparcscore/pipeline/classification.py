@@ -15,6 +15,7 @@ import pandas as pd
 
 import io
 from contextlib import redirect_stdout
+import cv2 as cv
 
 class MLClusterClassifier:
 
@@ -649,6 +650,19 @@ class CellFeaturizer():
         nucleus_area = nucleus_mask.view(N, -1 ).sum(1, keepdims = True)
         cytosol_mask = img[:, 1] > 0 
         cytosol_area = cytosol_mask.view(N, -1 ).sum(1, keepdims = True)
+        background_mask = (img[:, 1] == 0)
+        background_area = background_mask.view(N, -1 ).sum(1, keepdims = True)
+        
+        #Calculate cytosol mask properties
+        row_sums = torch.sum(cytosol_mask, dim=2)  # Sum along the columns to get row sums
+        col_sums = torch.sum(cytosol_mask, dim=1)
+        first_non_zero_row_indices = torch.argmax((row_sums > 0).int(), dim=1)
+        first_non_zero_col_indices = torch.argmax((col_sums > 0).int(), dim=1)
+        shifted_row_sums = torch.stack([torch.roll(r, -int(i)) for r, i in zip(row_sums, first_non_zero_row_indices)])
+        shifted_col_sums = torch.stack([torch.roll(c, -int(i)) for c, i in zip(col_sums, first_non_zero_col_indices)])
+        ratios = shifted_col_sums/shifted_row_sums
+        mask = ~torch.isnan(ratios) & ~torch.isinf(ratios) & (ratios > 0)
+        cytosol_roundness = ((masked_tensor(ratios, mask) - 1)**2).mean(1).to_tensor(0).view(N, -1)
         
         #select channel to calculate summary statistics over
         img_selected = img[:, channel]
@@ -668,19 +682,28 @@ class CellFeaturizer():
         summed_intensity_cytosol_area_normalized = summed_intensity_cytosol_area/cytosol_area
         median_intensity_cytosol_area = masked_quantile(img_selected, cytosol_mask, quantile = 0.5, dim = 1, keepdim = True)
         
+        # Calculate median/mean intensity in the background area
+        summed_intensity_background_area = masked_tensor(img_selected, background_mask).view(N, -1).sum(1).reshape((N, 1)).to_tensor(0)
+        summed_intensity_background_area_normalized = summed_intensity_background_area/background_area
+        median_intensity_background_area = masked_quantile(img_selected, background_mask, quantile = 0.5, dim = 1, keepdim = True)
+        
         #generate results tensor with all values and return
         results = torch.concat([nucleus_area, 
                                 cytosol_area,
+                                cytosol_roundness,
                                 mean, 
                                 median, 
                                 quant75, 
                                 quant25, 
                                 summed_intensity_nucleus_area, 
                                 summed_intensity_cytosol_area, 
+                                summed_intensity_background_area,
                                 summed_intensity_nucleus_area_normalized, 
                                 summed_intensity_cytosol_area_normalized,
+                                summed_intensity_background_area_normalized,
                                 median_intensity_nucleus_area, 
-                                median_intensity_cytosol_area], 1)
+                                median_intensity_cytosol_area,
+                                median_intensity_background_area], 1)
         return(results)
 
     def inference(self, 
@@ -713,16 +736,20 @@ class CellFeaturizer():
         # save inferred activations / predictions
         result_labels = ["nucleus_area", 
                          "cytosol_area", 
+                         "cytosol_roundness",
                          "mean", 
                          "median", 
                          "quant75", 
                          "quant25", 
                          "summed_intensity_nucleus_area", 
                          "summed_intensity_cytosol_area", 
+                         "summed_intensity_background_area",
                          "summed_intensity_nucleus_area_normalized", 
                          "summed_intensity_cytosol_area_normalized",
+                         "summed_intensity_background_area_normalized",
                          "median_intensity_nucleus_area", 
-                         "median_intensity_cytosol_area"]
+                         "median_intensity_cytosol_area",
+                         "median_intensity_background_area"]
         
         dataframe = pd.DataFrame(data=result, columns=result_labels)
         dataframe["label"] = label
