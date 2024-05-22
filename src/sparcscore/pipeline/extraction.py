@@ -26,6 +26,8 @@ import timeit
 import _pickle as cPickle
 from matplotlib.pyplot import imshow, figure
 
+from memory_profiler import profile
+
 class HDF5CellExtraction(ProcessingStep):
     """
     A class to extracts single cell images from a segmented SPARCSpy project and save the 
@@ -253,9 +255,9 @@ class HDF5CellExtraction(ProcessingStep):
                 else:
                     channel_nucleus = hdf_channels[image_index, 0, window_y, window_x]
                 
-                channel_nucleus = percentile_normalization(channel_nucleus, 0.001, 0.999)
-                channel_nucleus = channel_nucleus * nuclei_mask_extended
-                channel_nucleus = MinMax(channel_nucleus)
+                # channel_nucleus = percentile_normalization(channel_nucleus, 0.001, 0.999)
+                # channel_nucleus = channel_nucleus * nuclei_mask_extended
+                # channel_nucleus = MinMax(channel_nucleus)
 
                 if n_channels >= 2:
                     
@@ -280,8 +282,8 @@ class HDF5CellExtraction(ProcessingStep):
                     else:
                         channel_wga = hdf_channels[image_index, 1,window_y,window_x]
 
-                    channel_wga = percentile_normalization(channel_wga)
-                    channel_wga = channel_wga * cell_mask_extended
+                    # channel_wga = percentile_normalization(channel_wga)
+                    # channel_wga = channel_wga * cell_mask_extended
                 
                 if n_channels == 1:
                     required_maps = [nuclei_mask, channel_nucleus]
@@ -295,9 +297,9 @@ class HDF5CellExtraction(ProcessingStep):
                     if hdf_channels.shape[0] > 2:  
                         for i in range(2, hdf_channels.shape[0]):
                             feature_channel = hdf_channels[i, window_y, window_x]   
-                            feature_channel = percentile_normalization(feature_channel)
-                            feature_channel = feature_channel*cell_mask_extended
-                            feature_channel = MinMax(feature_channel)
+                            # feature_channel = percentile_normalization(feature_channel)
+                            # feature_channel = feature_channel*cell_mask_extended
+                            # feature_channel = MinMax(feature_channel)
                             
                             feature_channels.append(feature_channel)
         
@@ -305,9 +307,9 @@ class HDF5CellExtraction(ProcessingStep):
                     if hdf_channels.shape[1] > 2:
                         for i in range(2, hdf_channels.shape[1]):
                             feature_channel = hdf_channels[image_index, i, window_y, window_x]
-                            feature_channel = percentile_normalization(feature_channel)
-                            feature_channel = feature_channel*cell_mask_extended
-                            feature_channel = MinMax(feature_channel)
+                            # feature_channel = percentile_normalization(feature_channel)
+                            # feature_channel = feature_channel*cell_mask_extended
+                            # feature_channel = MinMax(feature_channel)
                             
                             feature_channels.append(feature_channel)
                 
@@ -567,14 +569,19 @@ class TimecourseHDF5CellExtraction(HDF5CellExtraction):
         #_tmp_single_cell_index  = tempmmap.array(self.single_cell_index_shape, dtype = "<U32")
 
         self.TEMP_DIR_NAME = TEMP_DIR_NAME
-
+        
     def _transfer_tempmmap_to_hdf5(self):
         global _tmp_single_cell_data, _tmp_single_cell_index   
 
         self.log(f"number of cells too close to image edges to extract: {len(self.save_index_to_remove)}")
-        _tmp_single_cell_data = np.delete(_tmp_single_cell_data, self.save_index_to_remove, axis=0)
-        _tmp_single_cell_index = np.delete(_tmp_single_cell_index, self.save_index_to_remove, axis=0)
-
+        # _tmp_single_cell_data = np.delete(_tmp_single_cell_data, self.save_index_to_remove, axis=0)
+        # _tmp_single_cell_index = np.delete(_tmp_single_cell_index, self.save_index_to_remove, axis=0)
+        mask = np.ones(len(_tmp_single_cell_data), dtype=bool)
+        mask[self.save_index_to_remove] = False
+        _tmp_single_cell_data = _tmp_single_cell_data[mask, ...]
+        _tmp_single_cell_index = _tmp_single_cell_index[mask, ...]
+        
+        
         #extract information about the annotation of cell ids
         column_labels = ['index', "cellid"] + list(self.label_names.astype("U13"))[1:]
         
