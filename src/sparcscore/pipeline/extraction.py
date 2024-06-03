@@ -570,16 +570,17 @@ class TimecourseHDF5CellExtraction(HDF5CellExtraction):
 
         self.TEMP_DIR_NAME = TEMP_DIR_NAME
         
+    @profile    
     def _transfer_tempmmap_to_hdf5(self):
         global _tmp_single_cell_data, _tmp_single_cell_index   
 
         self.log(f"number of cells too close to image edges to extract: {len(self.save_index_to_remove)}")
         # _tmp_single_cell_data = np.delete(_tmp_single_cell_data, self.save_index_to_remove, axis=0)
         # _tmp_single_cell_index = np.delete(_tmp_single_cell_index, self.save_index_to_remove, axis=0)
-        mask = np.ones(len(_tmp_single_cell_data), dtype=bool)
-        mask[self.save_index_to_remove] = False
-        _tmp_single_cell_data = _tmp_single_cell_data[mask, ...]
-        _tmp_single_cell_index = _tmp_single_cell_index[mask, ...]
+        # mask = np.ones(len(_tmp_single_cell_data), dtype=bool)
+        # mask[self.save_index_to_remove] = False
+        # _tmp_single_cell_data = _tmp_single_cell_data[mask, ...]
+        # _tmp_single_cell_index = _tmp_single_cell_index[mask, ...]
         
         
         #extract information about the annotation of cell ids
@@ -762,6 +763,14 @@ class TimecourseHDF5CellExtraction(HDF5CellExtraction):
                         px_centers = np.array(list(compress(px_centers, filter)))
                         _cell_ids = list(compress(_cell_ids, filter))
 
+                        #filter edge cells
+                        image_width, image_height = input_image.shape
+                        width = self.config["image_size"]//2
+                        edge_filter = [width < x[0] and x[0] < image_width-width and width < x[1] and x[1] < image_height-width for x in px_centers]
+                        
+                        px_centers = px_centers[edge_filter]
+                        _cell_ids = list(compress(_cell_ids, edge_filter))
+                        
                         # #plotting results for debugging
                         # y, x = px_centers.T
                         # plt.scatter(x, y, color = "blue", s = 5)
