@@ -687,13 +687,23 @@ class CytosolSegmentationCellpose(BaseSegmentation):
         elif "model_path" in self.config["cytosol_segmentation"].keys():
             model_name = self.config["cytosol_segmentation"]["model_path"]
             model = self._read_cellpose_model("custom", model_name, use_GPU, device = device)
-
+        #Load diameter
         if "diameter" in self.config["cytosol_segmentation"].keys():
             diameter = self.config["cytosol_segmentation"]["diameter"]
         else:
             diameter = None
+        #Load cellprob threshold
+        if "cellprob_threshold" in self.config["cytosol_segmentation"].keys():
+            cellprob_threshold = self.config["cytosol_segmentation"]["cellprob_threshold"]
+        else:
+            cellprob_threshold = 0
+        #Load cellprob threshold
+        if "flow_threshold" in self.config["cytosol_segmentation"].keys():
+            flow_threshold = self.config["cytosol_segmentation"]["flow_threshold"]
+        else:
+            flow_threshold = 0.4
 
-        self.log(f"Segmenting cytosol using the following model: {model_name}")
+        self.log(f"Segmenting cytosol using the following model: {model_name}, diameter is {diameter}, cell probability threshold {cellprob_threshold}, flow threhold - {flow_threshold}")
         
         #################################
         #### Perform Cytosol Segmentation
@@ -703,7 +713,11 @@ class CytosolSegmentationCellpose(BaseSegmentation):
         else:
             channels = [2, 0]
         masks_cytosol = model.eval(
-            [input_image], diameter=diameter, channels=channels
+            [input_image], 
+            diameter=diameter, 
+            channels=channels,
+            cellprob_threshold=cellprob_threshold,
+            flow_threshold=flow_threshold
         )[0]
         masks_cytosol = np.array(masks_cytosol)  # convert to array
 
