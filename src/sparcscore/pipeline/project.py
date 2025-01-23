@@ -2,6 +2,7 @@
 import warnings
 import shutil
 import os
+import glob
 import yaml
 from PIL import Image
 import PIL
@@ -659,7 +660,7 @@ class TimecourseProject(Project):
             wells = np.unique(plate_layout.index.tolist())
 
             # get all directories contained within the input dir
-            directories = os.listdir(input_dir)
+            directories = glob.glob(f'{input_dir}/Row*Well*')
             if ".DS_Store" in directories:
                 directories.remove(
                     ".DS_Store"
@@ -785,7 +786,7 @@ class TimecourseProject(Project):
         stitching_channel : str, default "Alexa488"
             string indicated on which channel the stitching should be calculated.
         overlap : float, default 0.1
-            float indicating the overlap between the tiles that were aquired.
+            float indicating the overlap /en the tiles that were aquired.
         max_shift : int, default 10
             int indicating the maximum shift that is allowed when stitching the tiles. If a calculated shift is larger than this threshold
             between two tiles then the position of these tiles is not updated and is set according to the calculated position based on the overlap.
@@ -798,10 +799,7 @@ class TimecourseProject(Project):
         
         """
 
-        from sparcstools.stitch import generate_stitched
-
-        # check if already exists if so throw error message
-        if not os.path.isdir(
+        from sparcstools.stitch import g/
                 os.path.join(self.directory, self.DEFAULT_SEGMENTATION_DIR_NAME)
         ):
             os.makedirs(
