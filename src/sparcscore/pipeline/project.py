@@ -660,7 +660,8 @@ class TimecourseProject(Project):
             wells = np.unique(plate_layout.index.tolist())
 
             # get all directories contained within the input dir
-            directories = glob.glob(f'{input_dir}/Row*Well*')
+            directories = os.listdir(input_dir)
+            print(directories)
             if ".DS_Store" in directories:
                 directories.remove(
                     ".DS_Store"
