@@ -786,7 +786,7 @@ class TimecourseProject(Project):
         stitching_channel : str, default "Alexa488"
             string indicated on which channel the stitching should be calculated.
         overlap : float, default 0.1
-            float indicating the overlap /en the tiles that were aquired.
+            float indicating the overlap between the tiles that were aquired.
         max_shift : int, default 10
             int indicating the maximum shift that is allowed when stitching the tiles. If a calculated shift is larger than this threshold
             between two tiles then the position of these tiles is not updated and is set according to the calculated position based on the overlap.
@@ -799,7 +799,10 @@ class TimecourseProject(Project):
         
         """
 
-        from sparcstools.stitch import g/
+        from sparcstools.stitch import generate_stitched
+
+        # check if already exists if so throw error message
+        if not os.path.isdir(
                 os.path.join(self.directory, self.DEFAULT_SEGMENTATION_DIR_NAME)
         ):
             os.makedirs(
