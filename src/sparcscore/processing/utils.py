@@ -2,6 +2,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from skimage.color import label2rgb
 import os
+import h5py
+
+from sparcscore.processing.preprocessing import percentile_normalization
+
 
 def plot_image(array, size = (10,10), save_name="", cmap="magma", **kwargs):
     """
@@ -169,3 +173,104 @@ def flatten(l):
     """
     # Flatten the input list using list comprehension
     return [item for sublist in l for item in sublist]
+       
+def load_data_from_h5(project_path, image_id=0, crop_size=None):
+    """ Loads channel and segmentation data from an HDF5 file. """
+    seg_path = f"{project_path}/segmentation/input_segmentation.h5"
+    with h5py.File(seg_path, "r") as hf:
+        if crop_size is None:
+            channels = hf['input_images'][image_id, :, :, :]
+            segmentation = hf['segmentation'][image_id, :, :, :]
+        else:
+            channels = hf['input_images'][image_id, :, :crop_size, :crop_size]
+            segmentation = hf['segmentation'][image_id, :, :crop_size, :crop_size]
+
+    return channels, segmentation
+
+
+def create_rgb_image(channels, channel_color_map, normalization_percentiles):
+    """ Processes channels data to create an RGB image based on specified mappings and normalization percentiles. """
+    crop_size = channels.shape[1]  # Assuming all channels are of the same dimensions
+    rgb_image = np.zeros((crop_size, crop_size, 3), dtype=np.float32)
+    color_idx_map = {'red': 0, 'green': 1, 'blue': 2}
+
+    # Normalize and assign channels to specified colors in the RGB image
+    for channel_index, color in channel_color_map.items():
+        if color in color_idx_map:
+            low_perc, high_perc = normalization_percentiles.get(channel_index, (0.1, 0.99))
+            normalized_channel = percentile_normalization(channels[channel_index, :, :], 
+                                                          low_perc, high_perc)
+            rgb_image[..., color_idx_map[color]] = normalized_channel
+
+    return rgb_image
+
+def show_segmentation(rgb_image, segmentation, mask_colors={0: 'g', 1: 'r'}):
+    # If return_fig is true, create and return a figure displaying the RGB image
+    fig, ax = plt.subplots(figsize=(15, 15))
+    ax.imshow(rgb_image)  # Show the RGB image
+    # Draw contours for each segmentation mask
+    for i, mask in enumerate(segmentation):
+        ax.contour(mask, levels=[0.5], 
+                   colors=mask_colors.get(i), 
+                   linewidths=1)  # White color for visibility
+    plt.axis("off")
+    return fig
+
+def plot_seg_overlay_timecourse(project_path, channel_color_map={0: 'red', 1: 'green'}, 
+                                selection=None, return_fig=False, crop_size=None, 
+                                normalization_percentiles={0: (0.1, 0.98), 1: (0.05, .96)},
+                                mask_colors={0: 'g', 1: 'r'},
+                                image_id=0):
+    """
+    Wrapper function to load data and create an RGB image.
+    """
+    channels, segmentation = load_data_from_h5(project_path, image_id, crop_size)  # Ignoring segmentation
+
+    rgb_image = create_rgb_image(channels, channel_color_map, normalization_percentiles)
+
+    fig = show_segmentation(rgb_image, segmentation, mask_colors)
+    if return_fig:
+        return(fig)
+    
+    
+def create_custom_colormap(base_color_name):
+    """
+    Creates colormap for image visualization, copied from Anatoly's function
+    """
+    base_color = to_rgba(base_color_name)
+    start_color = to_rgba("black")
+    colors = [start_color, base_color]
+    cmap = LinearSegmentedColormap.from_list('custom_colormap', colors, N=65536)
+    return cmap
+
+def visualize_single_cells_by_id(project_path, 
+                                 cell_ids_to_plot,
+                                colors, **kwargs):
+    """
+    Create plots of invidual channels in all the channels
+    """
+    cells_path = f"{project_path}/extraction/data/single_cells.h5"
+    n_cells = len(cell_ids_to_plot)
+    
+    with h5py.File(cells_path, "r") as hf:
+        cells = hf.get("single_cell_data")
+        cell_ids = hf.get('single_cell_index')[...]
+        n_channels = cells.shape[1]
+        
+        cell_ids = pd.DataFrame(cell_ids, columns=['index', 'cell_id'])
+
+        fig, axs = plt.subplots(n_cells, n_channels, figsize = (n_channels*1, 
+                                                                n_cells*1))
+        
+        cells_to_return = []
+        for i, cell_id in enumerate(cell_ids_to_plot):
+            index = cell_ids[cell_ids.cell_id == cell_id].index.values[0]
+            image = cells[index]
+            cells_to_return.append(cells[index])
+            for n in range(n_channels):
+                image_n = create_custom_colormap(colors[n])(
+                    percentile_normalization(image[n], **kwargs)
+                )
+                axs[i, n].imshow(image_n)
+                axs[i, n].axis("off")
+    return(cells_to_return)
