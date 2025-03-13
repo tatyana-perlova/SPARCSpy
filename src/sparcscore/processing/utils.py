@@ -1,8 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from skimage.color import label2rgb
 import os
 import h5py
+from matplotlib.colors import LinearSegmentedColormap, to_rgba
+
 
 from sparcscore.processing.preprocessing import percentile_normalization
 
